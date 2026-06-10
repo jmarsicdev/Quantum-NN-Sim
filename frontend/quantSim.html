@@ -80,7 +80,8 @@
   .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
   .chip-ok .ws-dot { background: #4ade80; box-shadow: 0 0 8px rgba(74, 222, 128, 0.7); }
   .chip-wait .ws-dot { background: var(--c-par); animation: blink 1s infinite; }
-  .chip-bad .ws-dot { background: var(--c-naive); animation: blink 0.6s infinite; }
+  .chip-bad { border-color: rgba(248, 113, 113, 0.45); color: #fca5a5; }
+  .chip-bad .ws-dot { background: #f87171; animation: blink 0.6s infinite; }
   @keyframes blink { 50% { opacity: 0.25; } }
 
   .banner-drop {
@@ -113,14 +114,20 @@
   }
   .panel-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 11px var(--pad) 9px var(--pad);
+    flex-wrap: wrap; row-gap: 2px;
+    min-height: 41px;
+    padding: 10px var(--pad) 9px var(--pad);
     border-bottom: 1px solid var(--line);
   }
   .panel-title {
-    margin: 0; font-size: 11.5px; font-weight: 600; white-space: nowrap;
+    margin: 0; font-size: 11.5px; font-weight: 600; white-space: nowrap; flex: none;
     letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
   }
-  .panel-meta { margin-left: auto; font-size: 11px; color: var(--faint); }
+  .panel-meta {
+    margin-left: auto; font-size: 11px; color: var(--faint);
+    flex: 0 1 auto; min-width: 0; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
   .panel-body { padding: var(--pad); position: relative; }
 
   /* info popover */
@@ -164,6 +171,9 @@
   .cd-fly { stroke: var(--muted); stroke-width: 1; opacity: 0.75; }
   .cd-node { fill: var(--muted); }
   .cd-meas { stroke: var(--faint); fill: none; stroke-width: 1.2; }
+  .cd-rxx { fill: #221e2e; stroke: var(--line-strong); stroke-width: 1; }
+  .cd-rxx-label { fill: var(--muted); font-family: var(--font-mono); font-size: 8px; letter-spacing: 0.02em; }
+  .cd-encoding { opacity: 0.65; }
   .cd-layer-label {
     fill: var(--faint); font-family: var(--font-mono); font-size: 10px;
     letter-spacing: 0.08em;
@@ -176,6 +186,8 @@
   .cd-training .cd-gate-label { fill: var(--c-par); }
   .cd-training .cd-fly { stroke: var(--c-par); opacity: 0.9; }
   .cd-training .cd-node { fill: var(--c-par); }
+  .cd-training .cd-rxx { stroke: var(--c-par); fill: color-mix(in oklab, var(--c-par) 16%, #221e2e); }
+  .cd-training .cd-rxx-label { fill: var(--c-par); }
   .cd-training .cd-layer-label { fill: var(--c-par); }
   .cd-active-frame {
     fill: none; stroke: color-mix(in oklab, var(--c-par) 45%, transparent);
@@ -204,8 +216,10 @@
     flex: 1 1 auto; min-width: 0;
   }
   .bloch-tile.is-idle { opacity: 0.45; }
-  .bloch-meta { display: flex; align-items: center; gap: 6px; }
+  .bloch-meta { display: flex; align-items: center; gap: 7px; }
   .bloch-q { font-family: var(--font-mono); font-size: 10px; color: var(--faint); }
+  .bloch-r { font-size: 10px; color: var(--muted); letter-spacing: 0.02em; }
+  .bloch-tile.is-idle .bloch-r { color: var(--faint); }
   .bloch-ent-bar {
     width: 36px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.07);
     overflow: hidden; display: inline-block;

@@ -88,11 +88,14 @@
     this._lastExact = lossExact;
 
     // Finite shots ⇒ noisy loss estimates for the parameter-shift modes.
-    var sigma = cfg.shots === Infinity ? 0 : 0.55 / Math.sqrt(cfg.shots);
-    this._walk.naive = this._walk.naive * 0.82 + (rand() - 0.5) * sigma;
-    this._walk.par = this._walk.par * 0.82 + (rand() - 0.5) * sigma;
-    var lossNaive = clamp(lossExact + this._walk.naive + (rand() - 0.5) * sigma * 0.5, 0.012, 1.1);
-    var lossPar = clamp(lossExact + this._walk.par + (rand() - 0.5) * sigma * 0.5, 0.012, 1.1);
+    // Naive evaluates each parameter independently (noisier); the parallelized
+    // mode batches shifts and averages over commuting groups (tracks exact closely).
+    var sigmaN = cfg.shots === Infinity ? 0 : 0.62 / Math.sqrt(cfg.shots);
+    var sigmaP = sigmaN * 0.38;
+    this._walk.naive = this._walk.naive * 0.84 + (rand() - 0.5) * sigmaN;
+    this._walk.par = this._walk.par * 0.78 + (rand() - 0.5) * sigmaP;
+    var lossNaive = clamp(lossExact + this._walk.naive + (rand() - 0.5) * sigmaN * 0.7, 0.012, 1.1);
+    var lossPar = clamp(lossExact + this._walk.par + (rand() - 0.5) * sigmaP * 0.7, 0.012, 1.1);
     this.loss.exact.push(lossExact);
     this.loss.naive.push(lossNaive);
     this.loss.par.push(lossPar);
@@ -272,7 +275,11 @@
       self._emit(self._configMsg());
       // replay state so the UI can resume seamlessly
       self._emit({ type: 'resume', frame: self.engine.frame(), history: self.engine.loss, grads: self.engine.grads });
-      if (wasRunning && !self.engine.done) { self._running = true; self._startTimer(); }
+      if (wasRunning && !self.engine.done) {
+        self._running = true;
+        self._startTimer();
+        self._emit({ type: 'run_started' });
+      }
     }, 3200);
   };
 
@@ -287,7 +294,17 @@
   function LiveSocket(url) {
     var ws = new WebSocket(url);
     var nativeSend = ws.send.bind(ws);
-    ws.send = function (m) { nativeSend(typeof m === 'string' ? m : JSON.stringify(m)); };
+    var queue = [];
+    ws.addEventListener('open', function () {
+      while (queue.length) nativeSend(queue.shift());
+    });
+    // Mirror SimSocket's tolerance: the UI fires commands (e.g. initial speed)
+    // before the connection opens; queue them instead of throwing.
+    ws.send = function (m) {
+      var s = typeof m === 'string' ? m : JSON.stringify(m);
+      if (ws.readyState === 0) queue.push(s);
+      else if (ws.readyState === 1) nativeSend(s);
+    };
     ws.simulateDrop = function () { ws.close(); };
     return ws;
   }

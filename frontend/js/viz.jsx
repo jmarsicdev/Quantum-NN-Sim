@@ -2,23 +2,43 @@
 // Exposes CircuitDiagram and BlochRow on window.
 
 // ————— Circuit diagram —————
-// Per layer: a column of single-qubit rotation gates, then a butterfly
-// entangling stage pairing qubit i with i XOR 2^(l mod log2(n)).
+// Leftmost: an Ry encoding column. Then per layer: an Ry rotation on every
+// qubit, and a two-qubit Rxx entangler on each butterfly pair (i, i⊕2ˡ),
+// badged at the midpoint of the pair's connecting lines.
 function CircuitDiagram({ nQubits, nLayers, activeLayer, phase, glow }) {
   const n = nQubits, L = nLayers;
   const rowH = Math.max(15, Math.min(34, 290 / n));
   const padT = 26, padB = 34, padL = 64, padR = 26;
-  const colW = Math.max(96, Math.min(170, 920 / L));
+  const encW = 50;
+  const colW = Math.max(96, Math.min(170, 880 / L));
   const gateW = Math.min(34, colW * 0.26), gateH = Math.min(20, rowH * 0.72);
-  const W = padL + L * colW + padR;
+  const rxxH = Math.min(14, Math.max(11, rowH * 0.8));
+  const rxxW = rxxH * 2.0;
+  const W = padL + encW + L * colW + padR;
   const H = padT + (n - 1) * rowH + padB;
   const qy = (i) => padT + i * rowH;
   const m = Math.max(1, Math.ceil(Math.log2(n)));
   const running = phase === 'running' || phase === 'paused' || phase === 'done';
 
+  // encoding column: Ry on every qubit
+  const encGates = [];
+  const xEnc = padL + 4;
+  for (let i = 0; i < n; i++) {
+    encGates.push(
+      <g key={'enc' + i}>
+        <rect x={xEnc} y={qy(i) - gateH / 2} width={gateW} height={gateH} rx="3"
+          className="cd-gate" />
+        {gateH >= 14 && (
+          <text x={xEnc + gateW / 2} y={qy(i) + gateH * 0.22} className="cd-gate-label"
+            textAnchor="middle">Ry</text>
+        )}
+      </g>
+    );
+  }
+
   const layers = [];
   for (let l = 0; l < L; l++) {
-    const x0 = padL + l * colW;
+    const x0 = padL + encW + l * colW;
     const xGate = x0 + colW * 0.14;
     const xA = xGate + gateW + 6;          // butterfly start
     const xB = x0 + colW - 10;             // butterfly end
@@ -33,12 +53,13 @@ function CircuitDiagram({ nQubits, nLayers, activeLayer, phase, glow }) {
             className="cd-gate" />
           {gateH >= 14 && (
             <text x={xGate + gateW / 2} y={qy(i) + gateH * 0.22} className="cd-gate-label"
-              textAnchor="middle">{l % 2 === 0 ? 'Ry' : 'Rz'}</text>
+              textAnchor="middle">Ry</text>
           )}
         </g>
       );
     }
     const wires = [];
+    const badges = [];
     for (let i = 0; i < n; i++) {
       const p = i ^ stride;
       if (p < n && p > i) {
@@ -49,12 +70,21 @@ function CircuitDiagram({ nQubits, nLayers, activeLayer, phase, glow }) {
         wires.push(<circle key={'e' + i} cx={xA} cy={qy(p)} r="2.6" className="cd-node" />);
         wires.push(<circle key={'f' + i} cx={xB} cy={qy(i)} r="2.6" className="cd-node" />);
         wires.push(<circle key={'h' + i} cx={xB} cy={qy(p)} r="2.6" className="cd-node" />);
+        // two-qubit Rxx gate at the pair midpoint
+        const xm = (xA + xB) / 2, ym = (qy(i) + qy(p)) / 2;
+        badges.push(
+          <g key={'x' + i}>
+            <rect x={xm - rxxW / 2} y={ym - rxxH / 2} width={rxxW} height={rxxH} rx="3"
+              className="cd-rxx" />
+            <text x={xm} y={ym + rxxH * 0.26} textAnchor="middle" className="cd-rxx-label">Rxx</text>
+          </g>
+        );
       }
     }
     const statusLabel = status === 'training' ? 'training' : status === 'frozen' ? 'frozen' : 'queued';
     layers.push(
       <g key={'L' + l} className={'cd-layer cd-' + status + (glow && status === 'training' ? ' cd-glow' : '')}>
-        {gates}{wires}
+        {gates}{wires}{badges}
         <text x={x0 + colW / 2} y={H - 10} textAnchor="middle" className="cd-layer-label">
           {'L' + (l + 1) + ' · ' + statusLabel}
         </text>
@@ -86,6 +116,10 @@ function CircuitDiagram({ nQubits, nLayers, activeLayer, phase, glow }) {
         <line key={'r' + i} x1={padL - 4} y1={qy(i)} x2={W - padR + 4} y2={qy(i)} className="cd-rail" />
       ))}
       {wireLabels}
+      <g className="cd-layer cd-encoding">
+        {encGates}
+        <text x={xEnc + gateW / 2} y={H - 10} textAnchor="middle" className="cd-layer-label">enc</text>
+      </g>
       {layers}
       {/* measurement ticks */}
       {Array.from({ length: n }, (_, i) => (
@@ -204,15 +238,20 @@ function BlochRow({ nQubits, targetsRef, colors, animLevel, phase }) {
         <canvas width={size} height={size} style={{ width: size + 'px', height: size + 'px' }}></canvas>
         <div className="bloch-meta">
           <span className="bloch-q">{'q' + i}</span>
-          {size >= 62 && (
-            <span className="bloch-ent-bar" title="entanglement">
-              <span className="bloch-ent-fill" style={{
-                width: (live ? Math.round(ent * 100) : 0) + '%',
-                background: ent > 0.55 ? colors.warn : colors.arrow
-              }}></span>
-            </span>
-          )}
+          <span className="bloch-r mono"
+            style={live && tgt ? { color: ent > 0.55 ? colors.warn : colors.arrow } : null}
+            title="arrow length |r| · 1.00 = pure, shorter = more entangled">
+            {live && tgt ? '|r| ' + tgt.r.toFixed(2) : '|r| —'}
+          </span>
         </div>
+        {size >= 62 && (
+          <span className="bloch-ent-bar" title="entanglement">
+            <span className="bloch-ent-fill" style={{
+              width: (live ? Math.round(ent * 100) : 0) + '%',
+              background: ent > 0.55 ? colors.warn : colors.arrow
+            }}></span>
+          </span>
+        )}
       </div>
     );
   }

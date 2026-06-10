@@ -21,7 +21,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 const INFO = {
   circuit: {
     title: 'The circuit being trained',
-    body: 'Each column is one trainable layer: a rotation gate (Ry/Rz) on every qubit, then an entangling stage wired in a butterfly (FFT-like) pattern — qubit i pairs with qubit i⊕2ˡ, so information mixes across the whole register in log₂(n) layers. Training is layer-wise: the glowing layer is learning right now, dimmed layers are frozen at their trained values, faint layers are queued.'
+    body: 'Each qubit line starts with an Ry encoding gate. Then each trainable layer applies an Ry rotation to every qubit, followed by two-qubit Rxx entanglers wired in a butterfly (FFT-like) pattern — qubit i pairs with qubit i⊕2ˡ, so information mixes across the whole register in log₂(n) layers. Training is layer-wise: the glowing layer is learning right now, dimmed layers are frozen at their trained values, faint layers are queued.'
   },
   bloch: {
     title: 'Bloch spheres — one per qubit',
@@ -119,6 +119,7 @@ function App() {
   const blochRef = useRef([]);
   const sockRef = useRef(null);
   const [openInfo, setOpenInfo] = useState(null);
+  const [retryIn, setRetryIn] = useState(3);
 
   useEffect(() => {
     // Live backend when served over http(s) (opt out with ?live=0); mock engine otherwise.
@@ -220,13 +221,22 @@ function App() {
 
   const connecting = phase === 'connecting';
   const disconnected = phase === 'disconnected';
+
+  // disconnected → visible retry countdown on the status pill
+  useEffect(() => {
+    if (!disconnected) return;
+    setRetryIn(3);
+    const iv = setInterval(() => setRetryIn((s) => (s <= 1 ? 3 : s - 1)), 1000);
+    return () => clearInterval(iv);
+  }, [disconnected]);
+
   const live = phase === 'running' || phase === 'paused' || phase === 'done';
   const shotsLabel = SHOT_LABELS[cfg.shotIdx] === '∞' ? '∞ · ideal' : SHOT_LABELS[cfg.shotIdx] + ' shots';
 
   const statusChip = connecting
     ? { cls: 'chip-wait', txt: 'connecting…' }
     : disconnected
-      ? { cls: 'chip-bad', txt: 'reconnecting…' }
+      ? { cls: 'chip-bad', txt: 'disconnected · retrying in ' + retryIn + 's' }
       : { cls: 'chip-ok', txt: 'connected' };
 
   return (
@@ -259,7 +269,7 @@ function App() {
       {disconnected && (
         <div className="banner-drop" data-screen-label="Disconnected banner">
           <span className="ws-dot"></span>
-          connection lost — retrying… last data shown frozen below
+          connection lost — retrying in {retryIn}s… last data shown frozen below
         </div>
       )}
 
