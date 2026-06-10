@@ -9,7 +9,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest",
+]
+server = [
+    "fastapi>=0.136.3",
+    "uvicorn[standard]>=0.49.0",
+]
 
 [tool.uv]
 # CPU wheels by default (dev VM). On the desktop (RTX 5080 / Blackwell):

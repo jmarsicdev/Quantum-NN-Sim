@@ -11,9 +11,12 @@ New to quantum computing? Start with [RESEARCH.md](RESEARCH.md).
 ## Setup
 
 ```bash
-uv sync --extra dev          # CPU wheels (dev VM)
-uv run pytest                # verify the physics
+uv sync --extra dev --extra server   # CPU wheels (dev VM)
+uv run pytest                        # verify the physics
 uv run python examples/train_demo.py
+
+# live training dashboard:
+uv run uvicorn quantsim.server:app --port 8000   # then open http://localhost:8000/
 ```
 
 **On the desktop (RTX 5080):** the 5080 is Blackwell (sm_120) and needs the
@@ -33,14 +36,20 @@ auto-detects by default). Practical ceiling ≈ 28 qubits at complex64 on 16GB.
 - `quantsim/gradients.py` — autodiff (ground truth) vs naive parameter-shift
   vs the paper's parallelized parameter-shift
 - `quantsim/training.py` — layer-wise trainer, hybrid quantum-classical model
-- `tests/` — physics correctness + gradient-equivalence proofs
+- `quantsim/server.py` — FastAPI + WebSocket backend streaming live training
+  data to the dashboard (protocol defined by `frontend/js/engine.js`)
+- `frontend/` — dashboard from Claude design; runs against its built-in mock
+  when opened as a file, and against the live backend when served over http
+  (`?live=0` to force the mock)
+- `tests/` — physics correctness + gradient-equivalence proofs + WS protocol
 
 ## Status / roadmap
 
 - [x] Phase 1: simulator core
 - [x] Phase 2: Butterfly QNN, three gradient modes, layer-wise training
-- [ ] Phase 3: live web dashboard (FastAPI + WebSocket; Bloch spheres,
+- [x] Phase 3: live web dashboard (FastAPI + WebSocket; Bloch spheres,
       per-layer gradient norms / barren plateaus, budget comparison)
+      — pending: drop in refined design, verify in a browser
 - [ ] Phase 4: real-dataset task (UCI heart disease)
 - [ ] Phase 5: publish as educational tool (in-browser small circuits +
       recorded GPU training replays)
