@@ -39,6 +39,8 @@
     this.grads = [];                       // per epoch: array[L] of magnitude | null
     this.budget = { exact: 0, naive: 0, par: 0 };
     this._rand = mulberry32(1337 + n * 101 + L * 7);
+    this._fired = {};
+    this._analysis = null;
     this._lossFrom = 0.92 + 0.06 * this._rand();
     this._lastExact = this._lossFrom;
     this._layerStartLoss = this._lossFrom;
@@ -59,6 +61,12 @@
 
   QuantSimEngine.prototype.activeLayer = function () {
     return Math.min(this.cfg.nLayers - 1, Math.floor(this.epoch / this.cfg.epochsPerLayer));
+  };
+
+  QuantSimEngine.prototype._once = function (key) {
+    if (this._fired[key]) return false;
+    this._fired[key] = true;
+    return true;
   };
 
   // Barren-plateau factor: gradients vanish exponentially in qubit count.
@@ -139,9 +147,94 @@
       b.r = clamp(b.r + (rTarget - b.r) * 0.16 + (rand() - 0.5) * 0.015, 0.18, 1);
     }
 
+    // Commentary mirroring the live backend's analysis engine (mock parity).
+    var obs = [];
+    if (this.epoch === 0) {
+      obs.push({ panel: 'circuit', tone: 'milestone', text: 'Training begins. Features are angle-encoded as Ry rotations, then layer 1 of ' + L + ' trains while the others wait — that is layer-wise training.' });
+      obs.push({ panel: 'budget', tone: 'info', text: 'Cost per epoch: autodiff 1 analytic pass, naive shift ' + (2 * P) + ' circuit runs (2 per parameter), parallel shift ' + (2 * groups) + ' — constant in qubit count.' });
+      obs.push({ panel: 'loss', tone: cfg.shots === Infinity ? 'insight' : 'info', text: cfg.shots === Infinity ? 'Shots = ∞: parameter-shift gradients are mathematically exact, so all three curves should lie on top of each other.' : 'Every ⟨Z⟩ is estimated from ' + cfg.shots + ' measurements, so the hardware-style curves carry sampling noise that autodiff never sees.' });
+    }
+    if (e === 0 && l > 0) {
+      obs.push({ panel: 'circuit', tone: 'milestone', text: 'Layer ' + l + ' is frozen at its trained values; layer ' + (l + 1) + ' now trains, mixing information across a new butterfly stride.' });
+    }
+    if (g[l] != null && g[l] < 1e-3 && this._once('bp' + l)) {
+      obs.push({ panel: 'heat', tone: 'warning', text: '‖∇θ‖ = ' + g[l].toExponential(1) + ' on the training layer — barren-plateau territory at ' + n + ' qubits.' });
+    }
+    var rs = this.bloch.map(function (b) { return b.r; });
+    var minR = Math.min.apply(null, rs);
+    var meanR = rs.reduce(function (a, b) { return a + b; }, 0) / rs.length;
+    if (minR < 0.9 && this._once('ent1')) {
+      obs.push({ panel: 'bloch', tone: 'insight', text: 'q' + rs.indexOf(minR) + "'s arrow has shrunk to |r| = " + minR.toFixed(2) + ' — that is entanglement: the qubit\'s state is no longer fully its own.' });
+    }
+    if (meanR < 0.6 && this._once('ent2')) {
+      obs.push({ panel: 'bloch', tone: 'milestone', text: 'Average purity is down to ' + meanR.toFixed(2) + ' — the register is strongly entangled now.' });
+    }
+    if (lossExact < 0.6931 && this._once('coin')) {
+      obs.push({ panel: 'loss', tone: 'milestone', text: 'Loss dropped below ln 2 ≈ 0.693 — the cross-entropy of pure guessing. The model is now better than a coin flip.' });
+    }
+    if (e === E - 1) {
+      obs.push({ panel: 'budget', tone: l === 0 ? 'insight' : 'info', text: 'Layer ' + (l + 1) + ' done: naive shift at ' + this.budget.naive.toLocaleString('en-US') + ' executions vs ' + this.budget.par.toLocaleString('en-US') + ' parallelized — ×' + (this.budget.naive / this.budget.par).toFixed(1) + ' for identical gradients.' });
+    }
+    var rank = { milestone: 3, warning: 2, insight: 1, info: 0 };
+    obs.sort(function (a, b) { return rank[b.tone] - rank[a.tone]; });
+    obs = obs.slice(0, 4);
+    this._analysis = { headline: obs.length ? obs[0].text : null, observations: obs };
+
     this.epoch++;
     if (this.epoch >= this.totalEpochs) this.done = true;
     return this.frame();
+  };
+
+  // End-of-run report (mock parity with the backend's build_report).
+  QuantSimEngine.prototype.report = function () {
+    var cfg = this.cfg, n = cfg.nQubits, L = cfg.nLayers, E = cfg.epochsPerLayer;
+    var exact = this.loss.exact;
+    var layers = [];
+    for (var l = 0; l < L; l++) {
+      var seg = exact.slice(l * E, (l + 1) * E);
+      if (!seg.length) continue;
+      var gs = [];
+      var rows = this.grads.slice(l * E, (l + 1) * E);
+      for (var i = 0; i < rows.length; i++) if (rows[i][l] != null) gs.push(rows[i][l]);
+      var peak = gs.length ? Math.max.apply(null, gs) : null;
+      layers.push({
+        layer: l, startLoss: seg[0], endLoss: seg[seg.length - 1],
+        deltaPct: seg[0] ? (1 - seg[seg.length - 1] / seg[0]) * 100 : 0,
+        peakGrad: peak, endGrad: gs.length ? gs[gs.length - 1] : null,
+        plateau: peak != null && peak < 1e-3
+      });
+    }
+    var accOf = function (x) { return clamp(1.02 - 0.65 * x, 0.5, 0.99); };
+    var fin = function (a) { return a.length ? a[a.length - 1] : null; };
+    var modes = {
+      exact: { finalLoss: fin(this.loss.exact), accuracy: accOf(fin(this.loss.exact) || 1), executions: this.budget.exact },
+      naive: { finalLoss: fin(this.loss.naive), accuracy: accOf(fin(this.loss.naive) || 1), executions: this.budget.naive },
+      par: { finalLoss: fin(this.loss.par), accuracy: accOf(fin(this.loss.par) || 1), executions: this.budget.par }
+    };
+    var rs = this.bloch.map(function (b) { return b.r; });
+    var meanR = rs.reduce(function (a, b) { return a + b; }, 0) / rs.length;
+    var ratio = this.budget.par ? this.budget.naive / this.budget.par : 0;
+    var P = 3 * n, groups = Math.max(1, Math.ceil(P / n));
+    return {
+      headline: 'Trained ' + L + ' layer(s) × ' + E + ' epochs at ' + n + ' qubits — parallel parameter-shift reached ' + Math.round(modes.par.accuracy * 100) + '% accuracy for ' + this.budget.par.toLocaleString('en-US') + ' circuit runs; naive needed ' + this.budget.naive.toLocaleString('en-US') + ' for the same gradients.',
+      config: { nQubits: n, nLayers: L, shots: cfg.shots === Infinity ? 'inf' : cfg.shots, epochsPerLayer: E, totalEpochs: exact.length, paramsPerLayer: P, totalParams: P * L, samples: 16 },
+      modes: modes,
+      layers: layers,
+      budget: { naiveOverPar: ratio, perEpoch: { exact: 1, naive: 2 * P, par: 2 * groups } },
+      bloch: { meanPurity: meanR, minPurity: Math.min.apply(null, rs), entropy: null },
+      takeaways: [
+        cfg.shots === Infinity
+          ? 'With infinite shots all three trainers follow the same trajectory — parameter shift gives the exact gradient; hardware\'s real costs are noise and executions, not gradient quality.'
+          : 'At ' + cfg.shots + ' shots the hardware-style losses wander around the exact curve — every gradient on a real device is a statistical estimate.',
+        'Identical gradients, wildly different bills: naive parameter-shift spent ' + this.budget.naive.toLocaleString('en-US') + ' circuit executions, the parallelized rule ' + this.budget.par.toLocaleString('en-US') + ' (×' + ratio.toFixed(1) + ').',
+        this.bpFactor() < 0.18
+          ? 'Gradients at ' + n + ' qubits sit deep in barren-plateau territory — the exponential wall the paper\'s structure is built to dodge.'
+          : 'No hard barren plateau at ' + n + ' qubits — re-run wider and watch the plateau monitor fade.',
+        meanR < 0.9
+          ? 'Final mean qubit purity ' + meanR.toFixed(2) + ': shrunken Bloch arrows are entanglement made visible.'
+          : 'Qubits ended nearly pure — this run barely used entanglement.'
+      ]
+    };
   };
 
   QuantSimEngine.prototype.frame = function () {
@@ -159,7 +252,8 @@
       } : null,
       grads: latest >= 0 ? this.grads[latest] : null,
       bloch: this.bloch.map(function (b) { return { theta: b.theta, phi: b.phi, r: b.r }; }),
-      budget: { exact: this.budget.exact, naive: this.budget.naive, par: this.budget.par }
+      budget: { exact: this.budget.exact, naive: this.budget.naive, par: this.budget.par },
+      analysis: this._analysis
     };
   };
 
@@ -209,6 +303,7 @@
       self._emit(self.engine.tick());
       if (self.engine.done) {
         self._running = false;
+        self._emit({ type: 'report', report: self.engine.report() });
         self._emit({ type: 'run_complete' });
         self._stopTimer();
       }
@@ -240,11 +335,16 @@
         this._running = false;
         this._emit({ type: 'run_paused' });
         break;
-      case 'step':
+      case 'step': {
         this._running = false;
+        var wasDone = this.engine.done;
         this._emit(this.engine.tick());
-        if (this.engine.done) this._emit({ type: 'run_complete' });
+        if (this.engine.done) {
+          if (!wasDone) this._emit({ type: 'report', report: this.engine.report() });
+          this._emit({ type: 'run_complete' });
+        }
         break;
+      }
       case 'reset':
         this._running = false;
         this._stopTimer();

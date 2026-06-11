@@ -32,6 +32,43 @@ def test_websocket_protocol_handshake_and_step():
         # the headline: parallel-shift uses fewer executions than naive
         assert tick["budget"]["par"] < tick["budget"]["naive"]
 
+        # first epoch carries commentary from the analysis engine
+        analysis = tick["analysis"]
+        assert isinstance(analysis["headline"], str)
+        assert analysis["observations"]
+        for o in analysis["observations"]:
+            assert o["panel"] in {"circuit", "bloch", "loss", "heat", "budget"}
+            assert o["tone"] in {"info", "insight", "warning", "milestone"}
+
+
+def test_run_to_completion_sends_report():
+    client = TestClient(app)
+    with client.websocket_connect("/quantsim/v1") as ws:
+        ws.receive_json()  # hello
+        ws.receive_json()  # default config
+        ws.send_json({"cmd": "configure", "nQubits": 4, "nLayers": 1, "shots": "inf"})
+        config = ws.receive_json()
+        total = config["totalEpochs"]
+
+        for i in range(total):
+            ws.send_json({"cmd": "step"})
+            tick = ws.receive_json()
+            assert tick["type"] == "tick" and tick["epoch"] == i + 1
+
+        report_msg = ws.receive_json()
+        assert report_msg["type"] == "report"
+        rep = report_msg["report"]
+        assert isinstance(rep["headline"], str)
+        assert set(rep["modes"]) == {"exact", "naive", "par"}
+        for mode in rep["modes"].values():
+            assert 0.0 <= mode["accuracy"] <= 1.0
+        assert len(rep["layers"]) == 1
+        assert rep["budget"]["naiveOverPar"] > 1
+        assert rep["bloch"]["entropy"] is not None
+        assert len(rep["takeaways"]) >= 4
+
+        assert ws.receive_json()["type"] == "run_complete"
+
 
 def test_index_serves_dashboard():
     client = TestClient(app)

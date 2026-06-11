@@ -98,7 +98,7 @@
   .layout { display: grid; grid-template-columns: 1fr 292px; gap: var(--gap); align-items: start; }
   .main-col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
   .duo { display: grid; grid-template-columns: 1.35fr 1fr; gap: var(--gap); }
-  .sidebar { position: sticky; top: 14px; }
+  .sidebar { position: sticky; top: 14px; display: flex; flex-direction: column; gap: var(--gap); }
   @media (max-width: 1180px) {
     .layout { grid-template-columns: 1fr; }
     .sidebar { position: static; }
@@ -355,6 +355,87 @@
     width: 12px; height: 12px; border-radius: 50%;
     background: var(--text); border: 2px solid var(--c-par);
   }
+
+  /* ——— analysis feed ——— */
+  .feed {
+    display: flex; flex-direction: column; gap: 11px;
+    max-height: 400px; overflow-y: auto; padding-right: 4px;
+    scrollbar-width: thin;
+  }
+  .feed-item { border-left: 2px solid var(--line-strong); padding: 1px 0 1px 10px; }
+  .feed-item.tone-milestone { border-left-color: var(--c-par); }
+  .feed-item.tone-warning { border-left-color: var(--c-naive); }
+  .feed-item.tone-insight { border-left-color: var(--c-exact); }
+  .feed-meta { display: flex; gap: 7px; align-items: center; font-size: 9px; margin-bottom: 3px; }
+  .feed-epoch { color: var(--faint); letter-spacing: 0.06em; }
+  .feed-chip {
+    border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 7px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-size: 8.5px;
+  }
+  .tone-milestone .feed-chip { color: var(--c-par); border-color: color-mix(in oklab, var(--c-par) 50%, transparent); }
+  .tone-warning .feed-chip { color: var(--c-naive); border-color: color-mix(in oklab, var(--c-naive) 50%, transparent); }
+  .tone-insight .feed-chip { color: var(--c-exact); border-color: color-mix(in oklab, var(--c-exact) 50%, transparent); }
+  .feed-tone { color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; font-size: 8.5px; }
+  .feed-text { font-size: 11.5px; color: var(--muted); line-height: 1.5; text-wrap: pretty; }
+  .feed-item:first-child .feed-text { color: var(--text); }
+  .feed-idle {
+    font-size: 10.5px; color: var(--faint); letter-spacing: 0.08em;
+    text-align: center; padding: 14px 0;
+  }
+
+  /* ——— timeline scrubber + replay badge ——— */
+  .scrub { margin-bottom: 2px; }
+  .scrub.is-disabled { opacity: 0.45; pointer-events: none; }
+  .scrub-btns { display: flex; gap: 6px; margin-top: 4px; }
+  .btn-mini { flex: 1; padding: 5px 4px; font-size: 10px; letter-spacing: 0.04em; }
+  .btn-block { width: 100%; margin-top: 8px; flex: none; }
+  .hist-badge {
+    font-family: var(--font-mono); font-size: 9.5px; color: var(--c-par);
+    border: 1px solid color-mix(in oklab, var(--c-par) 50%, transparent);
+    border-radius: 999px; padding: 1px 8px;
+    letter-spacing: 0.12em; text-transform: uppercase;
+  }
+
+  /* ——— training report overlay ——— */
+  .report-veil {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(8, 6, 12, 0.74); backdrop-filter: blur(4px);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 42px 18px; overflow-y: auto;
+  }
+  .report-card {
+    width: min(860px, 100%);
+    background: linear-gradient(180deg, #16131d, #110e17);
+    border: 1px solid var(--line-strong); border-radius: 12px;
+    padding: 26px 30px 22px 30px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+  }
+  .report-top { display: flex; align-items: flex-start; gap: 16px; }
+  .report-top .btn-mini { flex: none; width: 30px; margin-left: auto; }
+  .report-kicker {
+    font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--c-par); margin-bottom: 7px;
+  }
+  .report-title { margin: 0; font-size: 16.5px; font-weight: 600; line-height: 1.5; text-wrap: pretty; }
+  .report-cfg { font-size: 11px; color: var(--muted); margin-top: 12px; line-height: 1.6; }
+  .report-h {
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--faint); margin: 24px 0 10px 0;
+    border-bottom: 1px solid var(--line); padding-bottom: 7px;
+  }
+  .report-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .report-table th {
+    text-align: left; font-size: 9.5px; color: var(--faint); font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 10px 6px 0;
+  }
+  .report-table td { padding: 7px 10px 7px 0; border-top: 1px solid var(--line); color: var(--text); }
+  .report-table td.mono { font-size: 11.5px; }
+  .report-ok { font-size: 10.5px; color: var(--faint); }
+  .report-takes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 9px; }
+  .report-takes li { font-size: 12.5px; color: var(--muted); line-height: 1.55; text-wrap: pretty; }
+  .report-takes li::marker { color: var(--c-par); }
+  .report-foot { display: flex; gap: 10px; margin-top: 26px; }
+  .report-foot .btn { flex: none; padding: 9px 18px; }
 </style>
 </head>
 <body>
@@ -368,6 +449,7 @@
 <script type="text/babel" src="js/tweaks-panel.jsx"></script>
 <script type="text/babel" src="js/viz.jsx"></script>
 <script type="text/babel" src="js/charts.jsx"></script>
+<script type="text/babel" src="js/analysis.jsx"></script>
 <script type="text/babel" src="js/app.jsx"></script>
 </body>
 </html>

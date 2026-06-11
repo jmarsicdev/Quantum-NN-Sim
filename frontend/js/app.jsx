@@ -41,7 +41,11 @@ const INFO = {
   },
   controls: {
     title: 'Experiment controls',
-    body: 'Qubits and layers reshape the circuit (and reset the run). The shot slider sets how many times each circuit is measured — fewer shots means noisier gradients; ∞ is a perfect, noiseless simulator. Step advances exactly one epoch so you can read every panel between updates.'
+    body: 'Qubits and layers reshape the circuit (and reset the run). The shot slider sets how many times each circuit is measured — fewer shots means noisier gradients; ∞ is a perfect, noiseless simulator. Step advances exactly one epoch so you can read every panel between updates. The timeline replays any earlier epoch on every panel, and a written report appears when the run completes.'
+  },
+  analysis: {
+    title: 'Live model analysis',
+    body: 'A rule engine watches the same numbers you see — losses, gradient norms, qubit purity, execution counts — and explains what they mean as they happen. Each note is tagged with the panel it describes; amber = milestone, red = warning, cyan = insight. Scrub the timeline and the commentary rewinds with everything else.'
   }
 };
 
@@ -114,12 +118,16 @@ function App() {
     layerStarts: [0, 36, 72],
     histories: { exact: [], naive: [], par: [] },
     grads: [],
-    budget: { exact: 0, naive: 0, par: 0 }
+    budget: { exact: 0, naive: 0, par: 0 },
+    frames: []                    // one per epoch: bloch/budget/analysis for replay
   });
   const blochRef = useRef([]);
   const sockRef = useRef(null);
   const [openInfo, setOpenInfo] = useState(null);
   const [retryIn, setRetryIn] = useState(3);
+  const [viewEpoch, setViewEpoch] = useState(null);   // null = live, N = replaying epoch N
+  const [report, setReport] = useState(null);
+  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     // Live backend when served over http(s) (opt out with ?live=0); mock engine otherwise.
@@ -141,14 +149,19 @@ function App() {
         case 'config':
           blochRef.current = msg.bloch;
           setPhase('idle');
+          setViewEpoch(null);
+          setReport(null);
+          setReportOpen(false);
           setRun({
             epoch: 0, totalEpochs: msg.totalEpochs, activeLayer: 0,
             layerStarts: msg.layerStarts,
             histories: { exact: [], naive: [], par: [] },
-            grads: [], budget: { exact: 0, naive: 0, par: 0 }
+            grads: [], budget: { exact: 0, naive: 0, par: 0 },
+            frames: []
           });
           break;
-        case 'run_started': setPhase('running'); break;
+        case 'run_started': setPhase('running'); setViewEpoch(null); break;
+        case 'report': setReport(msg.report); setReportOpen(true); break;
         case 'run_paused': setPhase('paused'); break;
         case 'run_complete': setPhase('done'); break;
         case 'run_reset': setPhase('idle'); break;
@@ -176,7 +189,11 @@ function App() {
               ...r, epoch: msg.epoch, totalEpochs: msg.totalEpochs, activeLayer: msg.activeLayer,
               histories: { exact: h.exact, naive: h.naive, par: h.par },
               grads: msg.grads ? r.grads.concat([msg.grads]) : r.grads,
-              budget: msg.budget
+              budget: msg.budget,
+              frames: r.frames.concat([{
+                epoch: msg.epoch, activeLayer: msg.activeLayer, bloch: msg.bloch,
+                budget: msg.budget, analysis: msg.analysis || null
+              }])
             };
           });
           if (phaseRef.current !== 'running' && phaseRef.current !== 'done') setPhase('paused');
@@ -239,6 +256,35 @@ function App() {
       ? { cls: 'chip-bad', txt: 'disconnected · retrying in ' + retryIn + 's' }
       : { cls: 'chip-ok', txt: 'connected' };
 
+  // ——— timeline replay: when viewEpoch is set, every panel renders that epoch ———
+  const viewing = viewEpoch != null && run.frames.length > 0;
+  const vf = viewing ? run.frames[Math.min(viewEpoch, run.frames.length) - 1] : null;
+  const disp = viewing ? {
+    epoch: vf.epoch, activeLayer: vf.activeLayer, budget: vf.budget,
+    histories: {
+      exact: run.histories.exact.slice(0, vf.epoch),
+      naive: run.histories.naive.slice(0, vf.epoch),
+      par: run.histories.par.slice(0, vf.epoch)
+    },
+    grads: run.grads.slice(0, vf.epoch)
+  } : {
+    epoch: run.epoch, activeLayer: run.activeLayer, budget: run.budget,
+    histories: run.histories, grads: run.grads
+  };
+  const feedEpoch = viewing ? vf.epoch : run.frames.length;
+
+  const scrubTo = (e) => {
+    const f = run.frames[Math.min(e, run.frames.length) - 1];
+    if (!f) return;
+    blochRef.current = f.bloch;
+    setViewEpoch(f.epoch);
+  };
+  const scrubLive = () => {
+    const last = run.frames[run.frames.length - 1];
+    if (last) blochRef.current = last.bloch;
+    setViewEpoch(null);
+  };
+
   return (
     <div className="shell">
       {/* ——— header ——— */}
@@ -250,11 +296,13 @@ function App() {
         <div className="run-readout mono">
           {live ? (
             <React.Fragment>
-              <span>epoch <b>{String(run.epoch).padStart(3, '0')}</b>/{run.totalEpochs}</span>
+              <span>epoch <b>{String(disp.epoch).padStart(3, '0')}</b>/{run.totalEpochs}</span>
               <span className="sep">·</span>
-              <span>layer <b>L{run.activeLayer + 1}</b>/{cfg.nLayers}</span>
+              <span>layer <b>L{disp.activeLayer + 1}</b>/{cfg.nLayers}</span>
               <span className="sep">·</span>
-              <span className={'run-state run-' + phase}>{phase === 'done' ? 'complete' : phase}</span>
+              {viewing
+                ? <span className="hist-badge">replay</span>
+                : <span className={'run-state run-' + phase}>{phase === 'done' ? 'complete' : phase}</span>}
             </React.Fragment>
           ) : (
             <span className="run-state-dim">{connecting ? 'initializing' : disconnected ? 'link down' : 'standing by'}</span>
@@ -283,9 +331,10 @@ function App() {
             {connecting ? <Skeleton h={300} /> : (
               <React.Fragment>
                 <CircuitDiagram nQubits={cfg.nQubits} nLayers={cfg.nLayers}
-                  activeLayer={run.activeLayer} phase={phase} glow={t.glow} />
+                  activeLayer={disp.activeLayer} phase={phase} glow={t.glow} />
                 {phase === 'idle' && <div className="hero-hint mono">▸ press play to begin layer-wise training</div>}
-                {phase === 'done' && <div className="hero-hint hero-done mono">run complete — all layers trained</div>}
+                {phase === 'done' && !viewing && <div className="hero-hint hero-done mono">run complete — all layers trained</div>}
+                {viewing && <div className="hero-hint mono">replaying epoch {disp.epoch} — press ● live or play to return</div>}
               </React.Fragment>
             )}
           </Panel>
@@ -306,15 +355,15 @@ function App() {
               meta={<span className="mono">{shotsLabel}</span>}
               openId={openInfo} setOpenId={setOpenInfo}>
               {connecting ? <Skeleton h={280} /> : (
-                <LossChart histories={run.histories} layerStarts={run.layerStarts}
-                  totalEpochs={run.totalEpochs} epoch={run.epoch} colors={colors} phase={phase} />
+                <LossChart histories={disp.histories} layerStarts={run.layerStarts}
+                  totalEpochs={run.totalEpochs} epoch={disp.epoch} colors={colors} phase={phase} />
               )}
             </Panel>
             <Panel id="heat" title="Barren plateau monitor" screenLabel="Plateau panel"
               meta={<span className="mono">‖∇θ‖ / layer / epoch</span>}
               openId={openInfo} setOpenId={setOpenInfo}>
               {connecting ? <Skeleton h={200} /> : (
-                <GradHeatmap grads={run.grads} nLayers={cfg.nLayers} totalEpochs={run.totalEpochs}
+                <GradHeatmap grads={disp.grads} nLayers={cfg.nLayers} totalEpochs={run.totalEpochs}
                   layerStarts={run.layerStarts} colors={colors} phase={phase} nQubits={cfg.nQubits} />
               )}
             </Panel>
@@ -325,7 +374,7 @@ function App() {
             meta={<span className="mono">circuit executions this run</span>}
             openId={openInfo} setOpenId={setOpenInfo}>
             {connecting ? <Skeleton h={120} /> : (
-              <BudgetOdometer budget={run.budget} colors={colors} phase={phase} nQubits={cfg.nQubits} />
+              <BudgetOdometer budget={disp.budget} colors={colors} phase={phase} nQubits={cfg.nQubits} />
             )}
           </Panel>
         </main>
@@ -340,14 +389,28 @@ function App() {
             <div className="panel-body">
               <div className="transport">
                 <button className="btn btn-primary" disabled={connecting || disconnected}
-                  onClick={() => send(phase === 'running' ? 'pause' : 'start')}>
+                  onClick={() => {
+                    if (phase !== 'running') setViewEpoch(null);
+                    send(phase === 'running' ? 'pause' : 'start');
+                  }}>
                   {phase === 'running' ? '❚❚ pause' : phase === 'done' ? '▸ rerun' : '▸ play'}
                 </button>
                 <button className="btn" disabled={connecting || disconnected || phase === 'running' || phase === 'done'}
-                  onClick={() => send('step')}>step</button>
+                  onClick={() => { setViewEpoch(null); send('step'); }}>step</button>
                 <button className="btn" disabled={connecting || disconnected || !live}
                   onClick={() => send('reset')}>reset</button>
               </div>
+              {phase === 'done' && report && (
+                <button className="btn btn-block" onClick={() => setReportOpen(true)}>
+                  ▤ training report
+                </button>
+              )}
+
+              <div className="ctl-divider"></div>
+
+              <TimelineScrubber frames={run.frames} viewEpoch={viewEpoch}
+                onScrub={scrubTo} onLive={scrubLive}
+                disabled={connecting || disconnected || phase === 'running'} />
 
               <div className="ctl-divider"></div>
 
@@ -367,8 +430,20 @@ function App() {
               <div className="ctl-note mono">changing topology resets the run</div>
             </div>
           </section>
+
+          <Panel id="analysis" title="Model analysis" screenLabel="Analysis panel"
+            meta={<span className="mono">{viewing ? 'replay · epoch ' + disp.epoch : 'live commentary'}</span>}
+            openId={openInfo} setOpenId={setOpenInfo}>
+            <AnalysisFeed frames={run.frames} uptoEpoch={feedEpoch} live={live} />
+          </Panel>
         </aside>
       </div>
+
+      {reportOpen && (
+        <ReportOverlay report={report}
+          onClose={() => setReportOpen(false)}
+          onReplay={() => { setReportOpen(false); scrubTo(1); }} />
+      )}
 
       {/* ——— tweaks ——— */}
       <window.TweaksPanel>

@@ -20,8 +20,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .analysis import Analyzer, build_report
 from .butterfly import ButterflyQNN
-from .state import bloch_vector
+from .state import bloch_vector, entanglement_entropy
 from .training import HybridModel, LayerwiseStepper
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -66,6 +67,11 @@ class Session:
         self.history = {key: [] for key in MODES}
         self.grads_history: list[list[float | None]] = []
         self._last_layer_grad: list[float | None] = [None] * self.n_layers
+        self.analyzer = Analyzer(
+            n_qubits=self.n_qubits, n_layers=self.n_layers, shots=shots,
+            epochs_per_layer=epochs_per_layer,
+            n_blocks=len(self.steppers["par"].model.qnn.layers[0]),
+            n_samples=n_samples)
 
     @property
     def total_epochs(self) -> int:
@@ -101,6 +107,7 @@ class Session:
 
     def tick(self) -> dict:
         layer = self.steppers["par"].layer
+        layer_epoch = self.steppers["par"].epoch_in_layer
         losses, grad_norm = {}, 0.0
         for key, stepper in self.steppers.items():
             loss, gnorm = stepper.step()
@@ -114,9 +121,18 @@ class Session:
         for key in MODES:
             self.history[key].append(losses[key])
         self.grads_history.append(grads)
-        return self.frame(losses, grads)
+        bloch, budget = self._bloch(), self._budget()
+        analysis = self.analyzer.observe(
+            epoch=self.epoch, layer=layer, layer_epoch=layer_epoch,
+            losses=losses, grad_norm=grad_norm, bloch=bloch, budget=budget)
+        return self.frame(losses, grads, bloch, budget, analysis)
 
-    def frame(self, losses: dict | None = None, grads: list | None = None) -> dict:
+    def _budget(self) -> dict:
+        return {key: st.model.sim.executions for key, st in self.steppers.items()}
+
+    def frame(self, losses: dict | None = None, grads: list | None = None,
+              bloch: list | None = None, budget: dict | None = None,
+              analysis: dict | None = None) -> dict:
         if losses is None and self.epoch > 0:
             losses = {key: self.history[key][-1] for key in MODES}
             grads = self.grads_history[-1]
@@ -128,10 +144,31 @@ class Session:
             "done": self.done,
             "loss": losses,
             "grads": grads,
-            "bloch": self._bloch(),
-            "budget": {key: st.model.sim.executions
-                       for key, st in self.steppers.items()},
+            "bloch": bloch if bloch is not None else self._bloch(),
+            "budget": budget if budget is not None else self._budget(),
+            "analysis": analysis,
         }
+
+    def report_msg(self) -> dict:
+        budget = self._budget()  # snapshot before predict() adds eval runs
+        accuracy = {}
+        for key, st in self.steppers.items():
+            preds = st.model.predict(self.xs)
+            accuracy[key] = ((preds >= 0.5).float() == self.ys).float().mean().item()
+        entropy = None
+        if self.n_qubits <= 16:
+            st = self.steppers["par"]
+            with torch.no_grad():
+                psi = st.model.sim.run(st.model.qnn.circuit(self.xs[0]), st.model.params)
+            entropy = entanglement_entropy(psi, self.n_qubits // 2).item()
+        return {"type": "report", "report": build_report(
+            n_qubits=self.n_qubits, n_layers=self.n_layers, shots=self.shots,
+            epochs_per_layer=self.epochs_per_layer,
+            n_blocks=len(self.steppers["par"].model.qnn.layers[0]),
+            n_samples=self.n_samples,
+            history=self.history, grads_history=self.grads_history,
+            budget=budget, accuracy=accuracy,
+            bloch=self._bloch(), entropy=entropy)}
 
 
 app = FastAPI(title="quantSim")
@@ -166,6 +203,7 @@ async def quantsim_ws(ws: WebSocket):
             await send(frame)
             if state["session"].done:
                 state["running"] = False
+                await send(await loop.run_in_executor(None, state["session"].report_msg))
                 await send({"type": "run_complete"})
                 return
             await asyncio.sleep(max(0.0, 1.0 / state["speed"] - (time.monotonic() - t0)))
@@ -203,10 +241,13 @@ async def quantsim_ws(ws: WebSocket):
                 await send({"type": "run_paused"})
             elif cmd == "step":
                 state["running"] = False
+                loop = asyncio.get_running_loop()
                 if not state["session"].done:
-                    loop = asyncio.get_running_loop()
                     frame = await loop.run_in_executor(None, state["session"].tick)
                     await send(frame)
+                    if state["session"].done:
+                        await send(await loop.run_in_executor(
+                            None, state["session"].report_msg))
                 if state["session"].done:
                     await send({"type": "run_complete"})
             elif cmd == "reset":

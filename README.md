@@ -124,6 +124,18 @@ Run it (below), press **play**, and:
 | **Training loss** | The same model trained 3 ways (see below) | All three should descend together. Drop the shot count and watch the hardware-realistic curves get noisy while autodiff stays smooth. |
 | **Barren plateau monitor** | Gradient magnitude per layer per epoch | Healthy training = bright cells. Crank the qubit count up and watch the whole map fade — gradients vanishing in real time. |
 | **Hardware budget** | Cumulative circuit executions per mode | The whole point of the paper in one number: naive parameter-shift explodes, the parallelized version barely moves. |
+| **Model analysis** | A rule engine narrating the run: it watches the same numbers you do and explains them as they happen | Each note is tagged with the panel it describes. Amber = milestone, red = warning, cyan = insight. |
+
+### Replay and the training report
+
+The **timeline** slider in Run control replays any earlier epoch — every panel
+(curves, heatmap, Bloch arrows, odometers, commentary) rewinds to exactly what
+it showed at that moment, so you can step through a run after the fact and read
+the explanation for each piece at each epoch. When a run finishes, a written
+**training report** opens: final loss/accuracy/execution-count per mode, a
+layer-by-layer verdict (healthy gradients vs barren plateau), and the
+takeaways the run actually demonstrated. From there, one click steps you back
+through the whole run.
 
 ### The three training modes (same model, same data, same loss)
 
@@ -148,7 +160,7 @@ Run it (below), press **play**, and:
 
 ```bash
 uv sync --extra dev --extra server   # CPU build (any machine)
-uv run pytest                        # 13 tests: physics + gradient equivalence
+uv run pytest                        # 22 tests: physics, gradient equivalence, analysis
 uv run python examples/train_demo.py # terminal comparison of the 3 modes
 
 uv run uvicorn quantsim.server:app --port 8000   # dashboard at http://localhost:8000/
@@ -170,6 +182,7 @@ ceiling ≈ 28 qubits at complex64 on 16 GB.
 - `quantsim/gradients.py` — the three gradient methods, side by side (start
   reading here: each function is one of the dashboard's three curves)
 - `quantsim/training.py` — layer-wise trainer + hybrid model
+- `quantsim/analysis.py` — rule-based commentary engine + training-report builder
 - `quantsim/server.py` — FastAPI/WebSocket backend streaming live training
 - `frontend/` — the dashboard (runs standalone on a built-in mock when opened
   as a file; live data when served over http)
