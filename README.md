@@ -14,7 +14,7 @@ No quantum background needed — start here, then go deeper with
 
 ---
 
-## The big idea in one paragraph
+## The big idea
 
 A quantum neural network is a machine learning model where the "network" is a
 quantum circuit: a sequence of operations applied to qubits, with tunable
